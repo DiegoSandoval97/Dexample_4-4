@@ -20,6 +20,11 @@
 
 //=====[Declaration of public data types]======================================
 
+/**
+* El enum matrixKeypadState_t se utiliza para representar los estados de la
+* máquina de estados utilizada para el teclado matricial
+*/
+
 typedef enum {
     MATRIX_KEYPAD_SCANNING,
     MATRIX_KEYPAD_DEBOUNCE,
@@ -86,7 +91,21 @@ char matrixKeypadIndexToCharArray[] = {
     '7', '8', '9', 'C',
     '*', '0', '#', 'D',
 };
+int row = 0;
+int col = 0;
+
+/**
+* La variable matrixKeypaddState del tipo matrixKeypadState_t será la que
+* permita utilizar la máquina de estados correspondiente al teclado matricial.
+* estadoAnterior es una variable que será utilizada para debugear la máquina
+* de estados.
+* La variable es global, puede ser leida y modificada por todas las funciones.
+*/
 matrixKeypadState_t matrixKeypadState;
+matrixKeypadState_t estadoAnterior;
+char matrixKeypadStateString[3][40] = {"MATRIX_KEYPAD_SCANNING",
+    "MATRIX_KEYPAD_DEBOUNCE",
+    "MATRIX_KEYPAD_KEY_HOLD_PRESSED"};
 
 int eventsIndex            = 0;
 systemEvent_t arrayOfStoredEvents[EVENT_MAX_STORAGE];
@@ -116,6 +135,8 @@ void matrixKeypadInit();
 char matrixKeypadScan();
 char matrixKeypadUpdate();
 
+void debug();
+
 //=====[Main function, the program entry point after power on or reset]========
 
 int main()
@@ -128,6 +149,7 @@ int main()
         uartTask();
         eventLogUpdate();
         delay(TIME_INCREMENT_MS);
+        debug();
     }
 }
 
@@ -140,6 +162,7 @@ void inputsInit()
     sirenPin.mode(OpenDrain);
     sirenPin.input();
     matrixKeypadInit();
+    mq2.mode(PullUp);
 }
 
 void outputsInit()
@@ -218,6 +241,11 @@ void alarmActivationUpdate()
 void alarmDeactivationUpdate()
 {
     if ( numberOfIncorrectCodes < 5 ) {
+        /**
+        * matrixKeypadUpdate devuelve el caracter leído por el tablero matricial.
+        * Si no se leyó ninguno se devuelve un \0. En ambos casos, el valor se guarda
+        * en keyReleased.
+        */
         char keyReleased = matrixKeypadUpdate();
         if( keyReleased != '\0' && keyReleased != '#' ) {
             keyPressed[matrixKeypadCodeIndex] = keyReleased;
@@ -227,6 +255,12 @@ void alarmDeactivationUpdate()
                 matrixKeypadCodeIndex++;
             }
         }
+        /**
+        * Si se presiona el # hay dos opciones. Si estaba activado incorrectCodeLed
+        * se fija si se presionó dos veces. En ese caso se pone un 0 en incorrectCodeLed.
+        * Si está prendida alarmState llama a la función areEqual para revisar si el código
+        * introducido es el correcto.
+        */
         if( keyReleased == '#' ) {
             if( incorrectCodeLed ) {
                 numberOfHashKeyReleasedEvents++;
@@ -530,17 +564,28 @@ void lm35ReadingsArrayInit()
 
 void matrixKeypadInit()
 {
+    /**
+    * Cuando se inicializa el teclado matricial, la variable matrixKeypaddState
+    * se inicializa en el estado MATRIX_KEYPAD_SCANNING.
+    * De este estado, si se detecta un caracter distinto de \0, e puede pasar al estado
+    * MATRIX_KEYPAD_DEBOUNCE.
+    */
     matrixKeypadState = MATRIX_KEYPAD_SCANNING;
+    estadoAnterior = MATRIX_KEYPAD_SCANNING;
     int pinIndex = 0;
+    /**
+    * Los pines correspondientes a las columnas del teclado son pines de entrada.
+    * Son los pines que se leerán y que generarán cambios en la máquina de estados.
+    * Esos pines se configuran como PullUp y son PB_12, PB_13, PB_15 y PC_6.
+    */
     for( pinIndex=0; pinIndex<KEYPAD_NUMBER_OF_COLS; pinIndex++ ) {
         (keypadColPins[pinIndex]).mode(PullUp);
     }
 }
 
-char matrixKeypadScan()
-{
-    int row = 0;
-    int col = 0;
+char    matrixKeypadScan()
+{   char str[100];
+    int stringLength;
     int i = 0;
 
     for( row=0; row<KEYPAD_NUMBER_OF_ROWS; row++ ) {
@@ -562,8 +607,19 @@ char matrixKeypadScan()
 
 char matrixKeypadUpdate()
 {
+    char str[100];
+    int stringLength;
     char keyDetected = '\0';
     char keyReleased = '\0';
+
+    /**
+    * La máquina de estados se modifica leyendo dos variables:
+    *   - keyDetected
+    *   - accumulatedDebounceMatrixKeypadTime
+    * La primera es una variable local de esta función. La segunda es una variable global
+    * pero que se modifica solo en esta función. Por lo tanto, el control de los estados
+    * se realiza adentro de matrixKeypadUpdate().
+    */
 
     switch( matrixKeypadState ) {
 
@@ -597,6 +653,7 @@ char matrixKeypadUpdate()
                 keyReleased = matrixKeypadLastKeyPressed;
             }
             matrixKeypadState = MATRIX_KEYPAD_SCANNING;
+            
         }
         break;
 
@@ -605,4 +662,30 @@ char matrixKeypadUpdate()
         break;
     }
     return keyReleased;
+}
+
+void debug()
+{
+    char mensaje[100];
+    char str[100];
+    int stringLength;
+    
+    if(estadoAnterior != matrixKeypadState){
+        sprintf(mensaje , "Se pasó del estado %s al estado %s", matrixKeypadStateString[estadoAnterior],
+                                                                    matrixKeypadStateString[matrixKeypadState]);
+        sprintf ( str, "%s\r\n", mensaje);
+        stringLength = strlen(str);
+        uartUsb.write( str, stringLength );
+        estadoAnterior = matrixKeypadState;
+        if(estadoAnterior == MATRIX_KEYPAD_DEBOUNCE){
+            sprintf ( str, "Se leyo la columna %d y la fila %d\r\nCorresponde a la tecla %c\r\n",
+                        col,row,matrixKeypadIndexToCharArray[row*KEYPAD_NUMBER_OF_ROWS + col]);
+            stringLength = strlen(str);
+            uartUsb.write( str, stringLength );
+        }
+    }
+
+    if(estadoAnterior != matrixKeypadState){
+    
+    }
 }
